@@ -11,4 +11,3 @@ pytz
 joblib
 scikit-learn
 psycopg2-binary
-libpq-dev

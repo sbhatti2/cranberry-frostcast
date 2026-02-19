@@ -1,0 +1,12 @@
+streamlit
+streamlit-folium
+folium
+pandas
+numpy
+herbie
+geopy
+xarray
+plotly
+pytz
+joblib
+scikit-learn

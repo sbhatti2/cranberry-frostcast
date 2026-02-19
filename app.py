@@ -22,6 +22,7 @@ import plotly.express as px
 import folium
 from streamlit_folium import st_folium
 from streamlit_folium import folium_static
+import pytz
 #%% Backend function 
 MODEL_PATH = 'frost_model_010626.joblib'
 
@@ -207,18 +208,19 @@ if st.session_state.get('show_results'):
         # The map embedded in the window before forecast and hrrr curve in its own window
     with st.expander("Hourly Cloud Movement (Forecast by NOAA NDFD)", expanded=True):
         # creating a Time Slider for the next 12 hours using local time but UTC used for request data from NOAA
-        current_time = datetime.now()
+        central_tz = pytz.timezone('US/Central')
+        central_now = datetime.now(pytz.utc).astimezone(central_tz) #In central time for displaying only
         # The user can choose between 0 - 12 hours to look at cloud cover forecast
         hour_offset = st.slider("Forecast Hour Offset", 0, 12, 0, help="Slide to see how clouds move over the next 12 hours.")
-        
+         
         # Calculate target times
-        target_local = current_time + timedelta(hours=hour_offset)
+        target_local = central_now + timedelta(hours=hour_offset)
         target_utc = datetime.utcnow() + timedelta(hours=hour_offset)
         
         # Format for the Map Request (UTC) and the Label (Local)
         vtit_time = target_utc.strftime("%Y-%m-%dT%H:00")
-        display_label = target_local.strftime("%I:00 %p %b %d")
-    
+        # display_label = target_local.strftime("%I:00 %p %b %d")
+        display_label = (target_local + timedelta(hours=1)).strftime("%B %d, %I:00 %p") # This addition of an hour (NOT FOR EST conversion) is to match the NOAA's database where a forecast is issued for the next hour. 12:05 issued forecast starts for 1:00 forecast.
         st.subheader(f"Cloud cover Forecast for {display_label}")
     
         # Setup Map

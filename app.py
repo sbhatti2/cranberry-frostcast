@@ -22,7 +22,7 @@ import plotly.express as px
 import folium
 from streamlit_folium import st_folium
 from streamlit_folium import folium_static
-import pytz
+import pytz 
 #%% Backend function 
 MODEL_PATH = 'frost_model_010626.joblib'
 

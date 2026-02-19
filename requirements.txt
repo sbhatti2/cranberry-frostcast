@@ -3,7 +3,7 @@ streamlit-folium
 folium
 pandas
 numpy
-herbie
+herbie-data
 geopy
 xarray
 plotly
@@ -12,3 +12,4 @@ joblib
 scikit-learn
 psycopg2-binary
 matplotlib
+cfgrib

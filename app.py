@@ -220,7 +220,7 @@ if st.session_state.get('show_results'):
         # Format for the Map Request (UTC) and the Label (Local)
         vtit_time = target_utc.strftime("%Y-%m-%dT%H:00")
         # display_label = target_local.strftime("%I:00 %p %b %d")
-        display_label = (target_local + timedelta(hours=1)).strftime("%B %d, %I:00 %p") # This addition of an hour (NOT FOR EST conversion) is to match the NOAA's database where a forecast is issued for the next hour. 12:05 issued forecast starts for 1:00 forecast.
+        display_label = (target_local).strftime("%B %d, %I:00 %p") # This display is according to central or CST/CDT. So there will be one hour lag from NOAA interface if accessed in Mass.
         st.subheader(f"Cloud cover Forecast for {display_label}")
     
         # Setup Map

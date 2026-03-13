@@ -230,7 +230,7 @@ st.write("""
 """)   
 now_utc = datetime.now(pytz.utc)
 # We assume the HRRR run from 2 hours ago is the most recent stable one available
-latest_run_time = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+latest_run_time = (now_utc - timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
 
 # .replace(tzinfo=None) with all herbie lines H = Herbie(latest_run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx)
 

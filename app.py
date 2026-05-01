@@ -686,7 +686,7 @@ if st.session_state.get('show_results'):
             name=map_choice,
             fmt="image/png",
             transparent=True,
-            opacity=0.75,
+            opacity=0.7,
             version="1.3.0",
             vtit=vtit_time ,attr="NOAA NDFD"
         ).add_to(m)
@@ -723,15 +723,15 @@ if st.session_state.get('show_results'):
             )
         ).add_to(m)
         
-        #Boundaries
-        folium.TileLayer(
-            tiles="https://tiles.stadiamaps.com/tiles/stamen_toner_lines/{z}/{x}/{y}{r}.png",
-            attr="© Stadia Maps © Stamen Design © OpenStreetMap contributors",
-            name="Boundaries",
-            opacity=0.9,
-            overlay=True,
-            control=False
-        ).add_to(m)
+        # #Boundaries
+        # folium.TileLayer(
+        #     tiles="https://tiles.stadiamaps.com/tiles/stamen_toner_lines/{z}/{x}/{y}{r}.png",
+        #     attr="© Stadia Maps © Stamen Design © OpenStreetMap contributors",
+        #     name="Boundaries",
+        #     opacity=0.9,
+        #     overlay=True,
+        #     control=False
+        # ).add_to(m)
         
         folium.TileLayer(
                     tiles="https://{s}.basemaps.cartocdn.com/light_only_lines/{z}/{x}/{y}{r}.png",

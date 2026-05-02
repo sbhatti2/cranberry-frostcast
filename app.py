@@ -28,23 +28,42 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 #%% Backend function 
 # MODEL_PATH = 'frost_model_010626.joblib'
+
 @st.cache_data(ttl=1800)
 def find_5am_value(lat, lon):
     headers = {'User-Agent': '(myweatherapp.com, contact@email.com)'}
-    point_url = f"https://api.weather.gov/points/{lat},{lon}"
-    res = requests.get(point_url, headers=headers).json()
-    forecast_url = res['properties']['forecastHourly']
-    forecast_data = requests.get(forecast_url, headers=headers).json()
-    periods = forecast_data['properties']['periods']
-    for i, period in enumerate(periods):
-        # startTime looks like '2026-05-02T05:00:00-04:00'
-        start_dt = datetime.fromisoformat(period['startTime'])
-        if start_dt.hour == 5 and start_dt.day == 2: # Target 5 AM May 2nd
-            val = period['temperature']
-            print(f"Target Time: {period['startTime']}")
-            print(f"Value: {val}")
-            print(f"Type: {type(val)}")
-            return val, i
+    
+    # 1. Get Today's date dynamically
+    now = datetime.now()
+    # If it's already past 5 AM today, we want 5 AM tomorrow
+    target_day = now.day if now.hour < 3 else (now + timedelta(days=1)).day
+    
+    print(f"Searching for 5 AM on Day: {target_day}") # Debug log
+
+    try:
+        point_url = f"https://api.weather.gov/points/{lat},{lon}"
+        res = requests.get(point_url, headers=headers).json()
+        forecast_url = res['properties']['forecastHourly']
+        forecast_data = requests.get(forecast_url, headers=headers).json()
+        periods = forecast_data['properties']['periods']
+
+        for i, period in enumerate(periods):
+            start_dt = datetime.fromisoformat(period['startTime'])
+            
+            # Check for hour 5 on our dynamic target day
+            if start_dt.hour == 5 and start_dt.day == target_day:
+                val = period['temperature']
+                print(f"Found! Target Time: {period['startTime']}, Value: {val}")
+                return val, i
+
+        print("!!! Could not find a 5 AM period in the current forecast.")
+        return None # Handled by your new safety checks in app.py
+
+    except Exception as e:
+        print(f"!!! API Error: {e}")
+        return None
+        
+
 
 @st.cache_data(ttl=1800)
 def get_forecast_value_synced(lat, lon, map_choice, hour_offset):
@@ -388,7 +407,7 @@ def display_custom_legend(layer_id):
     if layer_id == "ndfd.conus.sky":
         # Cloud Cover: Vivid Sky Blue -> Lavender (at 57%) -> Darker Gray
         st.write(
-            f'<div style="margin-bottom: 30px; width: 94%;">'
+            f'<div style="margin-bottom: 10px; width: 94%;">'
             f'<div style="background: linear-gradient(to right, '
             f'#7BC8F6 0%,    /* 0%: Vivid Light Sky Blue Base */'
             f'#a6dbfb 20%,   /* 20% Blend */'
@@ -673,11 +692,7 @@ if st.session_state.get('show_results'):
 
         # Setup Map
         m = folium.Map(location=[lat, lon], zoom_start=7, tiles='cartodbpositron')
-
-    
-
         # Add the NOAA CC Layer synced to the Slider's Time
-
         folium.WmsTileLayer(
             url="https://digital.weather.gov/ndfd.conus/wms",
             layers=selected_id,
@@ -757,31 +772,11 @@ if st.session_state.get('show_results'):
            popup=f"{BOG_TYPE}: {site_name}"
         ).add_to(m)
 
-    
         st.subheader(f"{map_choice} Forecast for {display_label}")
         display_custom_legend(selected_id)
         folium.LayerControl().add_to(m)
-        
-        
-        
-        # # Legend
-        # # Create 4 equal columns
-        # leg_col1, leg_col2, leg_col3, leg_col4 = st.columns(4)
-        
-        # with leg_col1:
-        #     st.markdown("**Deep Blue:** \nClear Sky (0-25%)")
-        
-        # with leg_col2:
-        #     st.markdown("**White/Pale Blue:** \nLight (25-50%)")
-        
-        # with leg_col3:
-        #     st.markdown("**Light Gray:** \nModerate (50-75%)")
-        
-        # with leg_col4:
-        #     st.markdown("**Dark Gray:** \nOvercast (75-100%)")
         # Rendering the map
         st_folium(m, height=600, width = 'stretch', key=f"map_{selected_id}_{hour_offset}")
-        
     
     with st.spinner(f"Analyzing HRRR data for {site_name}..."):
         res = get_prediction(lat, lon, latest_run_time, loaded_model, loaded_scaler,Time_Code,quantile)
@@ -950,7 +945,7 @@ if st.session_state.get('show_results'):
                         overlaying='y',
                         side='right'
                     ),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,font=dict(size=20))
+                    legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=0.77,font=dict(size=20))
                 )
                 st.plotly_chart(fig, width = 'stretch')
         else:

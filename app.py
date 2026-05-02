@@ -35,9 +35,7 @@ def find_5am_value(lat, lon):
     res = requests.get(point_url, headers=headers).json()
     forecast_url = res['properties']['forecastHourly']
     forecast_data = requests.get(forecast_url, headers=headers).json()
-    
     periods = forecast_data['properties']['periods']
-    
     for i, period in enumerate(periods):
         # startTime looks like '2026-05-02T05:00:00-04:00'
         start_dt = datetime.fromisoformat(period['startTime'])
@@ -789,18 +787,33 @@ if st.session_state.get('show_results'):
         res = get_prediction(lat, lon, latest_run_time, loaded_model, loaded_scaler,Time_Code,quantile)
         
         #for this mini block we are dealing with daylight times unless above
-        val, offset = find_5am_value(lat, lon)
+        # val, offset = find_5am_value(lat, lon)
+        prediction_data = find_5am_value(lat, lon)
+        if prediction_data:
+            val, offset = prediction_data
+        else:
+            # Fallback values so the dashboard still renders
+            val, offset = 0.0, 0.0
+            st.sidebar.warning("Note: NWS comparison data is currently updating. Minimum bog temp prediction is still active.")
         ndfd_5amDL_temp = get_forecast_value_synced(lat, lon, "Temp", offset)
         try:
             ndfd_float = float(ndfd_5amDL_temp.replace("°F", ""))
         except ValueError:
             ndfd_float = None
         hrrr_5amDL_float = float(res['hrrr_temp'])
-        raw_diff = ndfd_float - hrrr_5amDL_float
-        if raw_diff < 0:
-            prediction_offset = round(raw_diff,2)
+        
+        # Check if we actually have an NDFD number before doing math
+        if ndfd_float is not None:
+            raw_diff = ndfd_float - hrrr_5amDL_float
+            if raw_diff < 0:
+                prediction_offset = round(raw_diff, 2)
+            else:
+                prediction_offset = 0.0
         else:
+            # Fallback if NDFD is missing so the app doesn't crash
             prediction_offset = 0.0
+            raw_diff = 0.0
+    
         # print('Comparing ndfd and hrrr for 5 AM DST, lowering the prediction by: ',prediction_offset)
         res['prediction'] = round(res['prediction'] + prediction_offset,1)
         

@@ -922,30 +922,30 @@ if st.session_state.get('show_results'):
                     template="simple_white", 
                     hovermode="x unified",
                     height=500,
-                    margin=dict(l=50, r=50, t=20, b=50),
+                    margin=dict(l=1, r=1, t=20, b=50),
                     xaxis=dict(
                         title="Time",
-                        title_font=dict(size=22),
+                        title_font=dict(size=20),
                         tickfont=dict(size=18),
                         gridcolor='lightgrey'
                     ),
                     yaxis=dict(
                         title="Temperature (°F)",
-                        title_font=dict(size=22),
+                        title_font=dict(size=20),
                         tickfont=dict(size=18),
                         gridcolor='lightgrey',
                         range=[min(df_curve['Bog_Temp_Predicted'].min(), tol) - 2, max(df_curve['Temp'].max(), tol) + 2]
                     ),
                     yaxis2=dict(
                         title="Cloud Cover (%)",
-                        title_font=dict(size=22),
+                        title_font=dict(size=20),
                         tickfont=dict(size=18),
                         range=[0, 100],
                         showgrid=False,
                         overlaying='y',
                         side='right'
                     ),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=0.77,font=dict(size=20))
+                    legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1,font=dict(size=20))
                 )
                 st.plotly_chart(fig, width = 'stretch')
         else:

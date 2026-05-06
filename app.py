@@ -312,8 +312,12 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
     print(f"Scaled Inputs (First 3 values): {inputs_scaled}")
     
     if quantile is not None and hasattr(model, 'estimators_'):
-        prediction = predict_quantile(model, inputs_scaled, quantile)[0]
-        print(f'Using quantile prediction: {quantile*100:.0f}th percentile')
+        q_pred = predict_quantile(model, inputs_scaled, quantile)[0]
+        mean_pred = model.predict(inputs_scaled)[0]
+        # Take the most conservative (lowest) value
+        prediction = min(q_pred, mean_pred)
+        # log it for debugging
+        print(f"Quantile ({quantile}): {q_pred:.2f} | Mean: {mean_pred:.2f} | Final: {prediction:.2f}")
     else:
         prediction = model.predict(inputs_scaled)[0]
     print(f"Forecast for tonight: {prediction:.2f}°F. Result not logged.")
@@ -325,6 +329,7 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
         "fxx": fxx,
         "target_date": display_date_str
         }
+    
 
 def get_hrrr_curve(BOG_LAT, BOG_LON, run_time, Time_Code):
     points_df = pd.DataFrame({"latitude": [BOG_LAT], "longitude": [BOG_LON]}) 
@@ -506,21 +511,23 @@ st.set_page_config(page_title="Cranberry Frostcast", layout="wide")
 if 'region_selected' not in st.session_state:
     st.session_state.region_selected = None
 
-# 3. THE "CHANGE REGION" SIDEBAR BUTTON
-# This appears only AFTER a region is selected
+# --- 3. THE "CHANGE REGION" SIDEBAR BUTTON ---
 if st.session_state.region_selected is not None:
     with st.sidebar:
         st.write(f"**Current Region:** {st.session_state.region_selected}")
         if st.button("🔄 Change Region / Reset"):
-            st.session_state.region_selected = None
-            st.session_state.show_results = False # Reset results too
+            # Clear caches and wipe session state to force a clean restart
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
     
 # --- THE SPLASH SCREEN / ENTRY GATE ---
 if st.session_state.region_selected is None:
     st.title("❄️ Cranberry Frostcast")
     st.subheader("Safety Disclaimer")
-    st.set_page_config(page_title="Cranberry Frostcast", layout="wide")
+    # st.set_page_config(page_title="Cranberry Frostcast", layout="wide")
     st.warning("""
     **DISCLAIMER:** This tool is intented for informational purposes only and must not be used as the sole basis for spring frost management.
     Frost protection decisions must be made using multiple data sources,
@@ -533,11 +540,17 @@ if st.session_state.region_selected is None:
     with col1:
         if st.button("**Wisconsin** (Marsh Tool)", width = 'stretch'):
             st.session_state.region_selected = "WI"
+            # st.session_state.lat = 45.207653
+            # st.session_state.lon = -89.865660
+            # st.session_state.site_name = "Copper River Marsh"
             st.rerun()
             
     with col2:
         if st.button("**Massachusetts** (Bog Tool)", width = 'stretch'):
             st.session_state.region_selected = "MA"
+            # st.session_state.lat = 41.800299
+            # st.session_state.lon = -70.736287
+            # st.session_state.site_name = "Rosebrook"
             st.rerun()
             
     st.stop()
@@ -565,13 +578,13 @@ elif st.session_state.region_selected == "MA":
     DEFAULT_SITE = "Rosebrook"
     DEFAULT_LAT = 41.800299
     DEFAULT_LON = -70.736287
-    TOL = 29.5
+    TOL = 25
     LOCAL_TZ = pytz.timezone('US/Eastern')
     Time_Code = 'US/Eastern'
     TZ_LABEL = "EDT" if datetime.now(pytz.timezone('US/Eastern')).dst() else "EST"
     quantile = 0.5
 
-st.set_page_config(page_title = 'Cranberry Frostcast', layout="wide")
+# st.set_page_config(page_title = 'Cranberry Frostcast', layout="wide")
 st.title(APP_TITLE)
 
 # CACHING THE MODEL - We load the model once and keep it in memory
@@ -617,22 +630,73 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+if 'lat' not in st.session_state:
+    st.session_state.lat = DEFAULT_LAT
+if 'lon' not in st.session_state:
+    st.session_state.lon = DEFAULT_LON
+if 'site_name' not in st.session_state:
+    st.session_state.site_name = DEFAULT_SITE
+    
 col1, col2 = st.columns([1, 2])
+
 with col1:
-    # st.header("1. Marsh Location")
     st.header(f"1. Enter {BOG_TYPE} Details")
-    site_name = st.text_input(f"{BOG_TYPE} Name", DEFAULT_SITE)
-    # site_name = st.text_input("Bog Name", "Copper River Marsh")
-    lat = st.number_input("Latitude", value=DEFAULT_LAT, format="%.6f")
-    lon = st.number_input("Longitude", value=DEFAULT_LON, format="%.6f")
-    tol = st.number_input("Tolerance", value=float(TOL), format="%.1f",step = 0.5)
-    predict_btn = st.button("Generate Forecast", type="primary", width = 'stretch')
+    st.warning(f"**To generate the forecast,** select location from map below, enter your {BOG_TYPE.lower()}'s tolerance and click on Generate Forecast button")
+    # 1. Pull current values from state
+    current_lat = st.session_state.get('lat')
+    current_lon = st.session_state.get('lon')
+    current_site = st.session_state.get('site_name')
+
+    # 2. Create inputs using those values
+    site_name = st.text_input(f"{BOG_TYPE} Name", value=current_site)
+    lat = st.number_input("Latitude", value=current_lat, format="%.6f")
+    lon = st.number_input("Longitude", value=current_lon, format="%.6f")
+    
+    # 3. Update state immediately if user types something new
+    st.session_state.lat = lat
+    st.session_state.lon = lon
+    st.session_state.site_name = site_name
+    
+    tol = st.number_input("Tolerance", value=float(TOL), format="%.1f", step=0.5)
+    predict_btn = st.button("Generate Forecast", type="primary", use_container_width=True)
 
 with col2:
-    st.header("2. Location Preview")
-    map_df = pd.DataFrame({'lat': [lat], 'lon': [lon]})
-    st.map(map_df, zoom=12)
+    st.header("2. Click Map to Select Location")
+    st.warning("**To select your farm location,** you can drag the map and click exactly where you want the prediction for. Please confirm your selection below the map.")
+    # Create the Folium Map
+    m = folium.Map(
+        location=[st.session_state.lat, st.session_state.lon], 
+        zoom_start=14,
+        tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        attr='Google'
+    )
     
+    # Add a marker for the CURRENTLY SAVED location
+    folium.Marker(
+        [st.session_state.lat, st.session_state.lon],
+        popup=f"Selected Location",
+        icon=folium.Icon(color='red')
+    ).add_to(m)
+
+    # st_folium will capture the click
+    map_output = st_folium(m, width="100%", height=500, key="farm_map")
+
+    # Logic for the "Confirm" step
+    if map_output and map_output.get("last_clicked"):
+        click_lat = map_output["last_clicked"]["lat"]
+        click_lon = map_output["last_clicked"]["lng"]
+        
+        # Display a bold confirmation button right below the map if they click
+        
+        # Using a large, bold button that is hard to miss
+        if st.button("**Confirm your selected location** ✅ ", type="primary"):
+            st.session_state.lat = click_lat
+            st.session_state.lon = click_lon
+            st.session_state.site_name = f"Selected {BOG_TYPE}"
+            st.rerun()
+           
+        st.markdown(f"**Selected Point: {click_lat:.5f}, {click_lon:.5f}**")
+            
 st.markdown("---") 
 st.write("""
     **Disclaimer:** This forecast is for informational purposes only. 
@@ -691,7 +755,7 @@ if st.session_state.get('show_results'):
         # st.subheader(f"Cloud cover Forecast for {display_label}")
 
         # Setup Map
-        m = folium.Map(location=[lat, lon], zoom_start=7, tiles='cartodbpositron')
+        m = folium.Map(location=[lat, lon], zoom_start=12, tiles='cartodbpositron')
         # Add the NOAA CC Layer synced to the Slider's Time
         folium.WmsTileLayer(
             url="https://digital.weather.gov/ndfd.conus/wms",
@@ -778,7 +842,7 @@ if st.session_state.get('show_results'):
         # Rendering the map
         st_folium(m, height=600, width = 'stretch', key=f"map_{selected_id}_{hour_offset}")
     
-    with st.spinner(f"Analyzing HRRR data for {site_name}..."):
+    with st.spinner(f"Analyzing HRRR data for {site_name.lower()}..."):
         res = get_prediction(lat, lon, latest_run_time, loaded_model, loaded_scaler,Time_Code,quantile)
         
         #for this mini block we are dealing with daylight times unless above
@@ -809,7 +873,7 @@ if st.session_state.get('show_results'):
             prediction_offset = 0.0
             raw_diff = 0.0
     
-        # print('Comparing ndfd and hrrr for 5 AM DST, lowering the prediction by: ',prediction_offset)
+        print('Comparing ndfd and hrrr for 5 AM DST, lowering the prediction by: ',prediction_offset)
         res['prediction'] = round(res['prediction'] + prediction_offset,1)
         
         
@@ -821,7 +885,7 @@ if st.session_state.get('show_results'):
             diff = res['prediction'] - tol
             aorb = 'above'
         # Display Forecast Metrics
-        st.subheader(f"Forecast for {site_name} for the night of {res['target_date']}")
+        st.subheader(f"Forecast for {site_name.lower()} for the night of {res['target_date']}")
         # Adding a caption so the grower knows time when data was refreshed
         # st.caption(f"Valid for the night of {res['target_date']} | Based on HRRR {res['run_time']} run (Lead Time: F{res['fxx']})")
         

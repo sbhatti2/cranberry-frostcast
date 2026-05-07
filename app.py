@@ -30,11 +30,12 @@ from plotly.subplots import make_subplots
 # MODEL_PATH = 'frost_model_010626.joblib'
 
 @st.cache_data(ttl=1800)
-def find_5am_value(lat, lon):
+def find_5am_value(lat, lon,time_code):
     headers = {'User-Agent': '(myweatherapp.com, contact@email.com)'}
     
     # 1. Get Today's date dynamically
-    now = datetime.now()
+    tz = pytz.timezone(time_code)
+    now = datetime.now(tz)
     # If it's already past 5 AM today, we want 5 AM tomorrow
     target_day = now.day if now.hour < 3 else (now + timedelta(days=1)).day
     
@@ -849,7 +850,7 @@ if st.session_state.get('show_results'):
         
         #for this mini block we are dealing with daylight times unless above
         # val, offset = find_5am_value(lat, lon)
-        prediction_data = find_5am_value(lat, lon)
+        prediction_data = find_5am_value(lat, lon,Time_Code)
         if prediction_data:
             val, offset = prediction_data
         else:

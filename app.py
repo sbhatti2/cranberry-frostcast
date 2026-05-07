@@ -246,7 +246,7 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
     # --- 2. REGION-SPECIFIC DATA FETCHING ---
     if "Eastern" in time_code:  
     ############ Fetch NOAA LCD NB and Ply weather station real time data
-        station_data = get_multi_synoptic_observations('d6dc992ce66644d68aa646f7f1e344a6', ["KEWB", "KPYM"], target_time=run_time)
+        station_data = get_multi_synoptic_observations('e40aaed8c2da4bdeb1b4ae78d161b293', ["KEWB", "KPYM"], target_time=run_time)
         
         # Extract with safety checks (defaulting to neutral values if a station is down)
         nb = station_data.get('KEWB', {})

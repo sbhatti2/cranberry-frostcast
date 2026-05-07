@@ -253,7 +253,7 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
         
         # NEW BEDFORD FEATURES (Primary)
         current_dp_nb = nb.get('dp', 0.0)
-        current_wind_speed_nb = min(17,nb.get('wind_speed', 0.0)) #capping ws from nb station to 17 mph cause anything above 18mph causes prediction to be 7-8F warmer
+        current_wind_speed_nb = nb.get('wind_speed', 0.0) #capping ws from nb station to 17 mph cause anything above 18mph causes prediction to be 7-8F warmer
         current_wind_dir_nb = nb.get('wind_dir', 0.0)
         current_air_temp_nb = nb.get('air_temp', 32.0)
         
@@ -571,8 +571,10 @@ if st.session_state.region_selected == "WI":
     
 elif st.session_state.region_selected == "MA":
     # Update these to your new filenames
-    MODEL_PATH = 'rf_hybrid_under_042726.pkl'
-    SCALER_PATH = 'scaler_hybrid_under_042726.pkl' 
+    # MODEL_PATH = 'rf_hybrid_under_042726.pkl'
+    # SCALER_PATH = 'scaler_hybrid_under_042726.pkl' 
+    MODEL_PATH = 'rf_hybrid_under_050626.pkl'
+    SCALER_PATH = 'scaler_hybrid_under_050626.pkl' 
     BOG_TYPE = "Bog"
     APP_TITLE = "Cranberry Bog Frostcast ❄️"
     DEFAULT_SITE = "Rosebrook"

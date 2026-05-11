@@ -581,7 +581,7 @@ elif st.session_state.region_selected == "MA":
     DEFAULT_SITE = "Rosebrook"
     DEFAULT_LAT = 41.800299
     DEFAULT_LON = -70.736287
-    TOL = 25
+    TOL = 27.0
     LOCAL_TZ = pytz.timezone('US/Eastern')
     Time_Code = 'US/Eastern'
     TZ_LABEL = "EDT" if datetime.now(pytz.timezone('US/Eastern')).dst() else "EST"

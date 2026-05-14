@@ -9,7 +9,8 @@ xarray
 plotly
 pytz
 joblib
-scikit-learn
+scikit-learn==1.8.0
 psycopg2-binary
 matplotlib
 cfgrib
+py3dep

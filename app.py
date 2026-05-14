@@ -7,8 +7,27 @@ Created on Wed Jan  7 15:38:55 2026
 """
 
 # %% import modules
+import warnings
+import logging
+
+# 1. Silence Scikit-Learn version mismatches (Old vs New model)
+warnings.filterwarnings("ignore", message="Trying to unpickle estimator")
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+
+# 2. Silence Herbie (HRRR downloader) chatter
+logging.getLogger('herbie').setLevel(logging.ERROR)
+
+# 3. Silence Py3DEP (USGS Elevation) request logs
+logging.getLogger('py3dep').setLevel(logging.ERROR)
+
+# 4. Silence cfgrib (GRIB file processing) "hypercubes" messages
+logging.getLogger('cfgrib').setLevel(logging.ERROR)
+
+warnings.filterwarnings("ignore", message="Will not remove GRIB file because it previously existed")
+
 import pandas as pd
 import numpy as np
+import py3dep
 from datetime import datetime, timedelta,time
 import matplotlib
 import matplotlib.pyplot as plt
@@ -16,7 +35,6 @@ import joblib
 from herbie import Herbie,FastHerbie
 from herbie import HerbieLatest, HerbieWait
 import xarray as xr
-import warnings
 import streamlit as st
 import plotly.express as px
 import folium
@@ -26,6 +44,16 @@ import pytz
 import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+# Silence the Xarray "FutureWarning" for combining weather data chunks
+xr.set_options(use_new_combine_kwarg_defaults=True)
+
+url_params = st.query_params
+
+if "lat" in url_params and "lon" in url_params:
+    st.session_state.lat = float(url_params["lat"])
+    st.session_state.lon = float(url_params["lon"])
+
 #%% Backend function 
 # MODEL_PATH = 'frost_model_010626.joblib'
 
@@ -144,6 +172,72 @@ def get_multi_synoptic_observations(token, station_list=["KEWB", "KPYM"], target
         print(f"Error fetching multi-station data: {e}")
     return None
 
+def get_elevation_ft(lat, lon):
+    url = "https://epqs.nationalmap.gov/v1/json"
+    params = {'x': lon, 'y': lat, 'units': 'Feet', 'wkid': 4326}
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        return float(resp.json()['value'])
+    except Exception as e:
+        print(f"  Elevation failed for ({lat},{lon}): {e}")
+        return None
+
+def get_tpi(lat, lon, radius_m, dem_resolution=10, buffer_km=5.5):
+    """
+    Compute TPI at given radius (meters) using USGS 3DEP 10m DEM.
+    buffer_km: how large a DEM patch to download around the point.
+    """
+    buffer_deg = buffer_km / 111.0  # approx degrees per km
+    bbox = (lon - buffer_deg, lat - buffer_deg,
+            lon + buffer_deg, lat + buffer_deg)
+    try:
+        # Download DEM patch
+        dem = py3dep.get_map('DEM', bbox, resolution=dem_resolution,
+                             crs='EPSG:4326')
+        dem_vals = dem.values.squeeze().astype(float)
+
+        # Find pixel closest to target point
+        lons = dem.x.values
+        lats = dem.y.values
+        lon_idx = int(np.argmin(np.abs(lons - lon)))
+        lat_idx = int(np.argmin(np.abs(lats - lat)))
+        center_elev = dem_vals[lat_idx, lon_idx]
+
+        # Build circular mask for neighborhood mean
+        radius_px = int(radius_m / dem_resolution)
+        y, x = np.ogrid[-radius_px:radius_px+1, -radius_px:radius_px+1]
+        circle = (x**2 + y**2) <= radius_px**2
+
+        # Extract neighborhood, clipped to array bounds
+        y0 = max(0, lat_idx - radius_px)
+        y1 = min(dem_vals.shape[0], lat_idx + radius_px + 1)
+        x0 = max(0, lon_idx - radius_px)
+        x1 = min(dem_vals.shape[1], lon_idx + radius_px + 1)
+        neighborhood = dem_vals[y0:y1, x0:x1]
+
+        # Clip circle mask to same shape
+        cy0 = radius_px - (lat_idx - y0)
+        cy1 = cy0 + (y1 - y0)
+        cx0 = radius_px - (lon_idx - x0)
+        cx1 = cx0 + (x1 - x0)
+        mask = circle[cy0:cy1, cx0:cx1]
+
+        mean_elev = np.nanmean(neighborhood[mask])
+        tpi = round(float(center_elev - mean_elev), 2)
+        return tpi
+
+    except Exception as e:
+        print(f"  TPI failed for ({lat},{lon}) radius={radius_m}m: {e}")
+        return None
+
+@st.cache_data
+def get_cached_terrain_data(lat, lon):
+    elev = 1000 #get_elevation_ft(lat, lon)
+    # radius_m=1000 for your specific TPI feature
+    tpi = 0 #get_tpi(lat, lon, radius_m=1000) 
+    return elev, tpi
+
 def predict_quantile(model, X, q):
     """
     Get qth quantile prediction across all RF trees.
@@ -198,7 +292,7 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
         fxx = int((target_4am_utc - run_time).total_seconds() // 3600)
         print(f"Long lead time ({fxx}h) detected. Snapping to extended run: {run_time}")
     try:
-        H = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx)
+        H = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx, verbose=False)
         # Attempt to load the index to verify it's on the server
         _ = H.index_as_dataframe
     except Exception:
@@ -207,41 +301,92 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
         rollback = 6 if fxx > 18 else 1
         run_time = run_time - timedelta(hours=rollback)
         fxx = int((target_4am_utc - run_time).total_seconds() // 3600)
-        H = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx)
+        H = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx, verbose=False)
     print (f"\nForecast time: {target_4am_utc} UTC & {target_4am_std_local} {tz_suffix}\nRun Time found: {run_time} UTC & {run_time_std_local} {tz_suffix}\nApprox. lead time to forecast minimum temperature: {fxx} hours\n")
     # Universally define the sub-hour Herbie objects
-    H_12am = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx - 4)
-    H_2am = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx - 2)
+    H_12am = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx - 4, verbose=False)
+    H_2am = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=fxx - 2, verbose=False)
     try: #this try-except block is to ensure there is no corrupted file in the local system with index so when the system checks the index is there but the file is corrupted/missing. In that case, the except block redownloads the hrrr data
         # overwrite=True is used to fix the FileNotFoundError
-        ds_list = H.xarray(r":TMP:surface|:TCDC:entire atmosphere|:LCDC:low", overwrite=True)
+        # Updated Search Strings to include MCDC, HCDC, and Wind components
+        search_string = r":TMP:surface|:TCDC:entire atmosphere|:LCDC:low|:MCDC:middle|:HCDC:high|:UGRD:10 m|:VGRD:10 m"
+        search_string_sub = r":TCDC:entire atmosphere|:MCDC:middle|:HCDC:high|:LCDC:low|:UGRD:10 m|:VGRD:10 m"
+        # ds_list = H.xarray(r":TMP:surface|:TCDC:entire atmosphere|:LCDC:low", overwrite=True)
+        ds_list = H.xarray(search_string, overwrite=True)
         # merge the different temp/cloud cover ds
         # compat="override" helps when coordinates are off by very small fraction
         ds = xr.merge(ds_list, join="override",compat="override", combine_attrs="drop_conflicts") #consider whether to add combine_attrs / join override
         # Sub-hour Cloud Cover Data
-        ds_12am = H_12am.xarray(r":TCDC:entire atmosphere", overwrite=True)
+        ds_12am_list = H_12am.xarray(search_string_sub, overwrite=True)
+        ds_12am = xr.merge(ds_12am_list, join="override", compat="override", combine_attrs="drop_conflicts")
         ds_2am = H_2am.xarray(r":TCDC:entire atmosphere", overwrite=True)
     except FileNotFoundError:
         # If the local file is corrupted/missing, clear the cache and try once more
         st.warning("Local weather file was corrupted. Re-downloading...")
         # Logic to re-run Herbie for new download
-        ds_list = H.xarray(r":TMP:surface|:TCDC:entire atmosphere|:LCDC:low", 
+        ds_list = H.xarray(search_string, 
         overwrite=True, 
         remove_grib=True)
         ds = xr.merge(ds_list, compat="override", join="override",combine_attrs="drop_conflicts")
-        ds_12am = H_12am.xarray(r":TCDC:entire atmosphere", overwrite=True, remove_grib=True)
+        ds_12am_list = H_12am.xarray(search_string_sub, overwrite=True)
+        ds_12am = xr.merge(ds_12am_list, join="override", compat="override", combine_attrs="drop_conflicts")
+        
+        
         ds_2am = H_2am.xarray(r":TCDC:entire atmosphere", overwrite=True, remove_grib=True)
-    point_data = ds.herbie.pick_points(points_df, method="weighted")
+    pt_4am = ds.herbie.pick_points(points_df, method="weighted")
     pt_12am = ds_12am.herbie.pick_points(points_df, method="weighted")
     pt_2am = ds_2am.herbie.pick_points(points_df, method="weighted")
-    print(point_data.data_vars)
-    safe_DOY = max([datetime.now().timetuple().tm_yday][0], 90)
+    # print(pt_4am.data_vars)
+    safe_DOY = max([datetime.now().timetuple().tm_yday][0], 61)
     # Universal Variables
-    temp_f = (float(point_data.t.values[0]) - 273.15) * 1.8 + 32
-    fcc_4am = float(point_data.tcc.values[0])
-    fcc_12am = float(pt_12am.tcc.values[0])
-    fcc_2am = float(pt_2am.tcc.values[0])
-    flcc_4am = float(point_data.lcc.values[0])
+    # --- TEMPERATURE ---
+    # temp_f = (float(pt_4am.t.values[0]) - 273.15) * 1.8 + 32
+    
+    if 't' in pt_4am:
+        temp_k = pt_4am.t.values[0]
+    else:
+        # If merged failed to flatten, find the dataset in the list that has 't'
+        temp_k = ds.filter_by_attrs(shortName='t').herbie.pick_points(points_df).t.values[0]
+    
+    temp_f = (float(temp_k) - 273.15) * 1.8 + 32
+    
+    
+    # --- CLOUD COVER (4 AM) ---
+    fcc_4am  = float(pt_4am.tcc.values[0])
+    flcc_4am = float(pt_4am.lcc.values[0])
+    fmcc_4am = float(pt_4am.mcc.values[0])
+    fhcc_4am = float(pt_4am.hcc.values[0])
+    
+    # --- CLOUD COVER (12 AM & 2 AM) ---
+    fcc_12am  = float(pt_12am.tcc.values[0])
+    flcc_12am = float(pt_12am.lcc.values[0])
+    fmcc_12am = float(pt_12am.mcc.values[0])
+    fhcc_12am = float(pt_12am.hcc.values[0])
+    fcc_2am   = float(pt_2am.tcc.values[0])
+    
+    # --- 12 AM Extraction ---
+    u12 = pt_12am.u10.values[0]
+    v12 = pt_12am.v10.values[0]
+    wspd_mph_12am = np.sqrt(u12**2 + v12**2) * 2.23694
+    
+    # Calculate Direction in Degrees (matching your training logic)
+    wdir_12am = (np.rad2deg(np.arctan2(-u12, -v12)) + 180) % 360
+    
+    # Convert Degrees to Sin/Cos for the Model
+    # Note: np.sin/cos expect Radians
+    am12_sin = np.sin(np.deg2rad(wdir_12am))
+    am12_cos = np.cos(np.deg2rad(wdir_12am))
+    
+    # --- 4 AM Extraction ---
+    u4 = pt_4am.u10.values[0]
+    v4 = pt_4am.v10.values[0]
+    wspd_mph_4am = np.sqrt(u4**2 + v4**2) * 2.23694
+    
+    wdir_4am = (np.rad2deg(np.arctan2(-u4, -v4)) + 180) % 360
+    
+    am4_sin = np.sin(np.deg2rad(wdir_4am))
+    am4_cos = np.cos(np.deg2rad(wdir_4am))
+    
     
     # --- 2. REGION-SPECIFIC DATA FETCHING ---
     if "Eastern" in time_code:  
@@ -296,23 +441,92 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
 
 
     elif "Central" in time_code: 
-        inputs = pd.DataFrame({'DOY' : [safe_DOY],
+        expected_features = scaler.n_features_in_
+        if expected_features > 10:
+            token = 'e40aaed8c2da4bdeb1b4ae78d161b293'
+            meta_url = f"https://api.synopticdata.com/v2/stations/metadata?radius={BOG_LAT},{BOG_LON},50&limit=3&network=1&token={token}"
+            meta_res = requests.get(meta_url).json()
+            station_ids = []
+            station_distances = []
+            
+            if meta_res['SUMMARY']['RESPONSE_CODE'] == 1:
+                for sta in meta_res['STATION']:
+                    station_ids.append(sta['STID'])
+                    # Distance is returned in miles if using radius search
+                    station_distances.append(float(sta['DISTANCE']))
+            if station_distances:
+                dist_1 = min(station_distances)
+            else:
+                dist_1 = 25  # Fallback if no stations are found
+            
+            obs_data = get_multi_synoptic_observations(token, station_ids, target_time=run_time)
+            weights = [1.0 / (d**2) if d > 0 else 1.0 for d in station_distances]
+            total_w = sum(weights)
+            
+            weighted_dp = 0.0
+            weighted_air = 0.0
+            for i, stid in enumerate(station_ids):
+                data = obs_data.get(stid, {})
+                # Pull values with safety fallbacks
+                dp = data.get('dp', 0.0)
+                air = data.get('air_temp', 32.0)
+                
+                weighted_dp += dp * (weights[i] / total_w)
+                weighted_air += air * (weights[i] / total_w)
+            
+            # CALCULATE DERIVED FEATURES
+            obs_dp_weighted = weighted_dp
+            obs_inv_pot_weighted = weighted_air - weighted_dp
+            elevation, tpi = get_cached_terrain_data(BOG_LAT, BOG_LON)
+            
+            # --- 5. ORGANIZE DATASET (Must match your Training Column Order Exactly) ---
+            inputs = pd.DataFrame([{
+                'DOY': safe_DOY,
+                'TCC_12am': fcc_12am,
+                'TCC_2am': fcc_2am,
+                'TCC_4am': fcc_4am,
+                'LCDC_12am': flcc_12am, 
+                'LCDC_4am': flcc_4am,
+                'MCDC_12am': fmcc_12am,
+                'MCDC_4am': fmcc_4am,
+                'HCDC_12am': fhcc_12am,
+                'HCDC_4am': fhcc_4am,
+                'TMP_F_4am': temp_f,
+                'WSPD_mph_12am': wspd_mph_12am,
+                'WSPD_mph_4am': wspd_mph_4am,
+                'OBS_DewPointTemperature_Weighted': obs_dp_weighted,
+                'fxx': fxx,
+                'latitude': BOG_LAT,
+                '12am_sin': am12_sin,
+                '12am_cos': am12_cos,
+                '4am_sin': am4_sin,
+                '4am_cos': am4_cos,
+                'Dist_1': dist_1,
+                'OBS_InvPot_Weighted': obs_inv_pot_weighted,
+                'Elevation_ft': elevation,
+                'TPImean_1000m_api': tpi
+            }])
+            
+            # RE-ORDER columns to match your X_train perfectly
+            # This is critical for Random Forest!
+            cols_order = ['DOY', 'TCC_12am', 'TCC_2am', 'TCC_4am', 'LCDC_12am', 'LCDC_4am', 
+                          'MCDC_12am', 'MCDC_4am', 'HCDC_12am', 'HCDC_4am', 'TMP_F_4am', 
+                          'WSPD_mph_12am', 'WSPD_mph_4am', 'OBS_DewPointTemperature_Weighted', 
+                          'fxx', 'latitude', '12am_sin', '12am_cos', '4am_sin', '4am_cos', 
+                          'Dist_1', 'OBS_InvPot_Weighted', 'Elevation_ft', 'TPImean_1000m_api']
+            inputs = inputs[cols_order]
+
+        else:
+            inputs = pd.DataFrame({'DOY' : [safe_DOY],
             'FTemp_4AM_Site_HRRR': temp_f, 
             'ForeLCC_4AM_Site_HRRR': flcc_4am,
             'ForeCC_4AM_Site_HRRR': fcc_4am
         })
-    #     inputs = pd.DataFrame({ 
-    #     'DOY' : [120], 
-    #     'FTemp_4AM_Site_HRRR': [19.0], 
-    #     'ForeLCC_4AM_Site_HRRR': [0.0], 
-    #     'ForeCC_4AM_Site_HRRR': [0.0]
-    # })
         print(inputs)
         
     inputs_scaled = scaler.transform(inputs)
-    print(f"Scaled Inputs (First 3 values): {inputs_scaled}")
-    
     if quantile is not None and hasattr(model, 'estimators_'):
+        print(f'inside quantile, inputs are: {inputs}')
         q_pred = predict_quantile(model, inputs_scaled, quantile)[0]
         mean_pred = model.predict(inputs_scaled)[0]
         # Take the most conservative (lowest) value
@@ -330,7 +544,6 @@ def run_forecast(BOG_LAT, BOG_LON,model, scaler, time_code,quantile=None, curren
         "fxx": fxx,
         "target_date": display_date_str
         }
-    
 
 def get_hrrr_curve(BOG_LAT, BOG_LON, run_time, Time_Code):
     points_df = pd.DataFrame({"latitude": [BOG_LAT], "longitude": [BOG_LON]}) 
@@ -370,7 +583,7 @@ def get_hrrr_curve(BOG_LAT, BOG_LON, run_time, Time_Code):
 
         try:
             point_time = point_utc.astimezone(LOCAL_TZ)
-            H = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=f)
+            H = Herbie(run_time.replace(tzinfo=None), model='hrrr', product='sfc', fxx=f, verbose=False)
             
             # Verify file availability/Rollback
             try:
@@ -379,14 +592,10 @@ def get_hrrr_curve(BOG_LAT, BOG_LON, run_time, Time_Code):
                 rollback = 6 if max_fxx > 18 else 1
                 temp_run = run_time - timedelta(hours=rollback)
                 f_new = int((point_utc - temp_run).total_seconds() // 3600)
-                H = Herbie(temp_run.replace(tzinfo=None), model='hrrr', product='sfc', fxx=f_new)
+                H = Herbie(temp_run.replace(tzinfo=None), model='hrrr', product='sfc', fxx=f_new, verbose=False)
 
             ds_list = H.xarray(r":TMP:surface|:TCDC:entire atmosphere", overwrite=True)
             ds = xr.merge(ds_list, join="override",compat="override", combine_attrs="drop_conflicts") #consider whether to add combine_attrs / join override
-            
-            
-            
-            
             p = ds.herbie.pick_points(points_df, method="weighted")
             
             temp_f = (float(p.t.values[0]) - 273.15) * 1.8 + 32
@@ -569,6 +778,9 @@ if st.session_state.region_selected == "WI":
     Time_Code = 'US/Central'
     TZ_LABEL = "CDT" if datetime.now(pytz.timezone('US/Central')).dst() else "CST" 
     quantile = 0.5
+    MODEL_PATH_NEW = "rfwi_hybrid_under_051326.pkl"
+    SCALER_PATH_NEW ="scalerwi_hybrid_under_051326.pkl"
+
     
 elif st.session_state.region_selected == "MA":
     # Update these to your new filenames
@@ -576,12 +788,14 @@ elif st.session_state.region_selected == "MA":
     # SCALER_PATH = 'scaler_hybrid_under_042726.pkl' 
     MODEL_PATH = 'rf_hybrid_under_050626.pkl'
     SCALER_PATH = 'scaler_hybrid_under_050626.pkl' 
+    MODEL_PATH_NEW = None
+    SCALER_PATH_NEW = None
     BOG_TYPE = "Bog"
     APP_TITLE = "Cranberry Bog Frostcast ❄️"
     DEFAULT_SITE = "Rosebrook"
     DEFAULT_LAT = 41.800299
     DEFAULT_LON = -70.736287
-    TOL = 27.0
+    TOL = 29.5
     LOCAL_TZ = pytz.timezone('US/Eastern')
     Time_Code = 'US/Eastern'
     TZ_LABEL = "EDT" if datetime.now(pytz.timezone('US/Eastern')).dst() else "EST"
@@ -593,6 +807,8 @@ st.title(APP_TITLE)
 # CACHING THE MODEL - We load the model once and keep it in memory
 @st.cache_resource
 def load_ml_model(model_path, scaler_path):
+    if model_path is None:
+        return None, None
     m_obj = joblib.load(model_path)
     # If it's the WI dictionary format
     if isinstance(m_obj, dict) and 'model' in m_obj:
@@ -610,18 +826,20 @@ def load_ml_model(model_path, scaler_path):
     return model, scaler
 
 loaded_model, loaded_scaler = load_ml_model(MODEL_PATH, SCALER_PATH)
+new_model, new_scaler = load_ml_model(MODEL_PATH_NEW, SCALER_PATH_NEW)
+
 #  CACHING THE WEATHER FETCHED BY THE HOUR 
-@st.cache_data(ttl=1800)
-def get_prediction(lat, lon,current_run_time, _model, _scaler,Time_Code,quantile=None):
+@st.cache_data(show_spinner=False)
+def get_prediction(lat, lon,current_run_time, _model, _scaler,Time_Code,quantile=None, model_id="default"):
     # This calls the function defined before that has the try/except rollback logic
     # The function returns a dictionary with metadata
     return run_forecast(lat, lon,_model, _scaler,Time_Code,quantile, current_run_time)
 
 
-
 @st.cache_data(ttl=1800)
 def get_cached_hrrr_curve(lat, lon, current_run_time,Time_Code):
     return get_hrrr_curve(lat, lon, current_run_time,Time_Code)
+
 
 #reduce white spacing in the page
 st.markdown("""
@@ -662,7 +880,8 @@ with col1:
     
     tol = st.number_input("Tolerance", value=float(TOL), format="%.1f", step=0.5)
     predict_btn = st.button("Generate Forecast", type="primary", use_container_width=True)
-
+if predict_btn:
+    st.session_state.show_results = True
 with col2:
     st.header("2. Click Map to Select Location")
     st.warning("**To select your farm location,** you can drag the map and click exactly where you want the prediction for. Please confirm your selection below the map.")
@@ -696,8 +915,9 @@ with col2:
             st.session_state.lat = click_lat
             st.session_state.lon = click_lon
             st.session_state.site_name = f"Selected {BOG_TYPE}"
+            st.query_params.update(lat=click_lat, lon=click_lon)
             st.rerun()
-           
+                      
         st.markdown(f"**Selected Point: {click_lat:.5f}, {click_lon:.5f}**")
             
 st.markdown("---") 
@@ -846,8 +1066,15 @@ if st.session_state.get('show_results'):
         st_folium(m, height=600, width = 'stretch', key=f"map_{selected_id}_{hour_offset}")
     
     with st.spinner(f"Analyzing HRRR data for {site_name.lower()}..."):
-        res = get_prediction(lat, lon, latest_run_time, loaded_model, loaded_scaler,Time_Code,quantile)
-        
+        res = get_prediction(lat, lon, latest_run_time, loaded_model, loaded_scaler,Time_Code,quantile, model_id="primary_model")
+        if new_model is not None:
+            # Run the second model for WI
+            res2 = get_prediction(lat, lon, latest_run_time, new_model, new_scaler, Time_Code, quantile, model_id="secondary_model")
+            print('Prediction from hrrr only vs. new integrated model')
+            print(res['prediction'])
+            print(res2['prediction'])
+            
+            res['prediction'] = np.minimum(res['prediction'], res2['prediction'])
         #for this mini block we are dealing with daylight times unless above
         # val, offset = find_5am_value(lat, lon)
         prediction_data = find_5am_value(lat, lon,Time_Code)
@@ -912,9 +1139,6 @@ if st.session_state.get('show_results'):
             st.success(f"✅ **LOW RISK**: Conditions currently look safe. Predicted temperature is {res['prediction']:.1f}°F, which is {diff:.1f}°F {aorb} Tolerance ({tol:.1f}°F).{weather_warning}")
         # Display the Hourly HRRR Curve
         st.markdown("### Overnight Temperature Trend using NOAA's HRRR regional model")
-        
-        
-        
         df_curve = get_cached_hrrr_curve(lat, lon, latest_run_time, Time_Code)
         # 1. Identify the minimum value in the raw HRRR curve
         hrrr_min_val = df_curve['Temp'].min()

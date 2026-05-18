@@ -49,10 +49,21 @@ from plotly.subplots import make_subplots
 xr.set_options(use_new_combine_kwarg_defaults=True)
 
 url_params = st.query_params
-
-if "lat" in url_params and "lon" in url_params:
-    st.session_state.lat = float(url_params["lat"])
-    st.session_state.lon = float(url_params["lon"])
+is_resetting = st.session_state.get("reset_active", False)
+if "lat" in url_params and "lon" in url_params and not is_resetting:
+    
+    try:
+        saved_lat = float(url_params["lat"])
+        saved_lon = float(url_params["lon"])
+        st.session_state.lat = saved_lat
+        st.session_state.lon = saved_lon
+        if saved_lon < -87.0:
+                st.session_state.region_selected = "WI"
+        else:
+            st.session_state.region_selected = "MA"
+    except ValueError:
+        pass
+    
 
 #%% Backend function 
 # MODEL_PATH = 'frost_model_010626.joblib'
@@ -721,20 +732,23 @@ st.set_page_config(page_title="Cranberry Frostcast", layout="wide")
 if 'region_selected' not in st.session_state:
     st.session_state.region_selected = None
 
-# --- 3. THE "CHANGE REGION" SIDEBAR BUTTON ---
-if st.session_state.region_selected is not None:
-    with st.sidebar:
-        st.write(f"**Current Region:** {st.session_state.region_selected}")
-        if st.button("🔄 Change Region / Reset"):
-            # Clear caches and wipe session state to force a clean restart
-            st.cache_data.clear()
-            st.cache_resource.clear()
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+# # --- 3. THE "CHANGE REGION" SIDEBAR BUTTON ---
+# if st.session_state.region_selected is not None:
+#     with st.sidebar:
+#         st.write(f"**Current Region:** {st.session_state.region_selected}")
+#         if st.button("🔄 Change Region / Reset"):
+#             # Clear caches and wipe session state to force a clean restart
+#             st.cache_data.clear()
+#             st.cache_resource.clear()
+#             for key in list(st.session_state.keys()):
+#                 del st.session_state[key]
+#             st.rerun()
     
 # --- THE SPLASH SCREEN / ENTRY GATE ---
 if st.session_state.region_selected is None:
+    # Clear the reset flag now that we successfully made it back to the home screen
+    if "reset_active" in st.session_state:
+        st.session_state.reset_active = False
     st.title("❄️ Cranberry Frostcast")
     st.subheader("Safety Disclaimer")
     # st.set_page_config(page_title="Cranberry Frostcast", layout="wide")
@@ -770,7 +784,7 @@ if st.session_state.region_selected == "WI":
     SCALER_PATH = 'frost_model_010626.joblib'
     APP_TITLE = "Cranberry Marsh Frostcast ❄️"
     BOG_TYPE = "Marsh"
-    DEFAULT_SITE = "Copper River Marsh"
+    DEFAULT_SITE = f"Selected {BOG_TYPE}"
     DEFAULT_LAT = 45.207653
     DEFAULT_LON = -89.865660
     TOL = 32.0
@@ -792,7 +806,7 @@ elif st.session_state.region_selected == "MA":
     SCALER_PATH_NEW = None
     BOG_TYPE = "Bog"
     APP_TITLE = "Cranberry Bog Frostcast ❄️"
-    DEFAULT_SITE = "Rosebrook"
+    DEFAULT_SITE = f"Selected {BOG_TYPE}"
     DEFAULT_LAT = 41.800299
     DEFAULT_LON = -70.736287
     TOL = 29.5
@@ -800,9 +814,6 @@ elif st.session_state.region_selected == "MA":
     Time_Code = 'US/Eastern'
     TZ_LABEL = "EDT" if datetime.now(pytz.timezone('US/Eastern')).dst() else "EST"
     quantile = 0.5
-
-# st.set_page_config(page_title = 'Cranberry Frostcast', layout="wide")
-st.title(APP_TITLE)
 
 # CACHING THE MODEL - We load the model once and keep it in memory
 @st.cache_resource
@@ -840,6 +851,27 @@ def get_prediction(lat, lon,current_run_time, _model, _scaler,Time_Code,quantile
 def get_cached_hrrr_curve(lat, lon, current_run_time,Time_Code):
     return get_hrrr_curve(lat, lon, current_run_time,Time_Code)
 
+# # st.set_page_config(page_title = 'Cranberry Frostcast', layout="wide")
+# st.title(APP_TITLE)
+# Create a clean inline top header layout
+title_col, btn_col = st.columns([0.80, 0.20], vertical_alignment="bottom")
+
+with title_col:
+    st.title(APP_TITLE)
+
+with btn_col:
+    if st.button("🔄 Change Region", type="secondary", width = 'stretch'):
+        st.session_state.reset_active = True
+        st.query_params.clear()
+        # Clear caches and completely wipe session state to drop back to splash screen cleanly
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        for key in list(st.session_state.keys()):
+            if key != "reset_active":  # Keep this flag alive for exactly one rerun
+                del st.session_state[key]
+        st.rerun()
+
+
 
 #reduce white spacing in the page
 st.markdown("""
@@ -857,7 +889,7 @@ if 'lon' not in st.session_state:
     st.session_state.lon = DEFAULT_LON
 if 'site_name' not in st.session_state:
     st.session_state.site_name = DEFAULT_SITE
-    
+
 col1, col2 = st.columns([1, 2])
 
 with col1:

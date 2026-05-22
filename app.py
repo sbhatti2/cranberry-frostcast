@@ -872,16 +872,35 @@ with btn_col:
         st.rerun()
 
 
-
-#reduce white spacing in the page
 st.markdown("""
     <style>
+        /* 1. Remove the stagnant Streamlit top header bar completely */
+        [data-testid="stHeader"] {
+            display: none !important;
+        }
+        
+        /* 2. Tighten up the main page wrapper padding */
         .block-container {
-            padding-top: 3rem;
-            padding-bottom: 0rem;
+            padding-top: 1rem !important;
+            padding-bottom: 0rem !important;
+        }
+        
+        /* 3. Optional: Smooth out touch scrolling on mobile browsers */
+        html, body {
+            overflow-y: scroll;
+            -webkit-overflow-scrolling: touch;
         }
     </style>
 """, unsafe_allow_html=True)
+# #reduce white spacing in the page
+# st.markdown("""
+#     <style>
+#         .block-container {
+#             padding-top: 3rem;
+#             padding-bottom: 0rem;
+#         }
+#     </style>
+# """, unsafe_allow_html=True)
 
 if 'lat' not in st.session_state:
     st.session_state.lat = DEFAULT_LAT
@@ -889,12 +908,14 @@ if 'lon' not in st.session_state:
     st.session_state.lon = DEFAULT_LON
 if 'site_name' not in st.session_state:
     st.session_state.site_name = DEFAULT_SITE
+if 'show_results' not in st.session_state:
+    st.session_state.show_results = False
 
 col1, col2 = st.columns([1, 2])
 
 with col1:
     st.header(f"1. Enter {BOG_TYPE} Details")
-    st.warning(f"**To generate the forecast,** select location from map below, enter your {BOG_TYPE.lower()}'s tolerance and click on Generate Forecast button")
+    st.warning(f"**To generate the forecast,** select location from map below, enter your {BOG_TYPE.lower()}'s tolerance and click on Generate Forecast button.")
     # 1. Pull current values from state
     current_lat = st.session_state.get('lat')
     current_lon = st.session_state.get('lon')
@@ -912,8 +933,9 @@ with col1:
     
     tol = st.number_input("Tolerance", value=float(TOL), format="%.1f", step=0.5)
     predict_btn = st.button("Generate Forecast", type="primary", use_container_width=True)
-if predict_btn:
-    st.session_state.show_results = True
+
+ 
+    
 with col2:
     st.header("2. Click Map to Select Location")
     st.warning("**To select your farm location,** you can drag the map and click exactly where you want the prediction for. Please confirm your selection below the map.")
@@ -933,25 +955,54 @@ with col2:
     ).add_to(m)
 
     # st_folium will capture the click
-    map_output = st_folium(m, width="100%", height=500, key="farm_map")
+    map_output = st_folium(m, width="100%", height=400, key="farm_map")
 
     # Logic for the "Confirm" step
     if map_output and map_output.get("last_clicked"):
         click_lat = map_output["last_clicked"]["lat"]
         click_lon = map_output["last_clicked"]["lng"]
         
-        # Display a bold confirmation button right below the map if they click
         
-        # Using a large, bold button that is hard to miss
-        if st.button("**Confirm your selected location** ✅ ", type="primary"):
+        
+        ################ NEW VERSION ################    
+        # Check if the click is actually a NEW location
+        if click_lat != st.session_state.lat or click_lon != st.session_state.lon:
+            # 1. Instantly move the map's coordinates to the new spot
             st.session_state.lat = click_lat
             st.session_state.lon = click_lon
             st.session_state.site_name = f"Selected {BOG_TYPE}"
             st.query_params.update(lat=click_lat, lon=click_lon)
-            st.rerun()
-                      
-        st.markdown(f"**Selected Point: {click_lat:.5f}, {click_lon:.5f}**")
             
+            # 2. CRITICAL: Break the old forecast visibility so they don't see stale data
+            st.session_state.show_results = False
+            st.session_state.needs_confirmation = True
+            # 3. Rerun to instantly slide the red marker to their thumb's tap
+            st.rerun()
+
+    # 2. SHOW THE BUTTON: Only if the pin just moved and hasn't been confirmed yet
+    if st.session_state.get('needs_confirmation', False) and not st.session_state.show_results:
+        if st.button("Confirm your selected location & Generate Forecast ✅ ", type="primary", use_container_width=True):
+            st.session_state.show_results = True
+            st.session_state.needs_confirmation = False # <-- Clear the flag once confirmed
+            st.rerun()
+        
+            st.markdown(f"**Selected Point: {click_lat:.5f}, {click_lon:.5f}**")
+        ################ NEW VERSION ################    
+        
+        
+        ################ OLD VERSION ################    
+        # # Display a bold confirmation button right below the map if they click
+        # # Using a large, bold button that is hard to miss
+        # if st.button("**Confirm your selected location** ✅ ", type="primary"):
+        #     st.session_state.lat = click_lat
+        #     st.session_state.lon = click_lon
+        #     st.session_state.site_name = f"Selected {BOG_TYPE}"
+        #     st.query_params.update(lat=click_lat, lon=click_lon)
+        #     st.session_state.show_results = True
+        #     st.rerun()
+                      
+        # st.markdown(f"**Selected Point: {click_lat:.5f}, {click_lon:.5f}**")
+        ################ OLD VERSION ################    
 st.markdown("---") 
 st.write("""
     **Disclaimer:** This forecast is for informational purposes only. 
@@ -1095,7 +1146,7 @@ if st.session_state.get('show_results'):
         display_custom_legend(selected_id)
         folium.LayerControl().add_to(m)
         # Rendering the map
-        st_folium(m, height=600, width = 'stretch', key=f"map_{selected_id}_{hour_offset}")
+        st_folium(m, height=400, width = 'stretch', key=f"map_{selected_id}_{hour_offset}")
     
     with st.spinner(f"Analyzing HRRR data for {site_name.lower()}..."):
         res = get_prediction(lat, lon, latest_run_time, loaded_model, loaded_scaler,Time_Code,quantile, model_id="primary_model")

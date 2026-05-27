@@ -79,7 +79,7 @@ def log_grower_request_to_sheets(time_et, lat, lon, tolerance, lowest_forecast_t
         conn = st.connection("gsheets", type=GSheetsConnection)
         
         # 2. Read the existing log rows into a temporary DataFrame
-        existing_data = conn.read(ttl=0) # ttl=0 ensures we bypass cache to get freshest data
+        existing_data = conn.read(worksheet=0, ttl=0) # ttl=0 ensures we bypass cache to get freshest data
         
         # 3. Format the new grower interaction row with the added NDFD metric
         new_row = pd.DataFrame([{
@@ -91,12 +91,17 @@ def log_grower_request_to_sheets(time_et, lat, lon, tolerance, lowest_forecast_t
             "Raw_HRRR_4AM_Temp": str(hrrr4am_temp),
             "NDFD_5AM_Temp": f"{float(ndfd_temp):.1f}" if ndfd_temp is not None else "N/A"
         }])
+        st.write(f'{new_row}')
         
-        # 4. Append the new row to the existing rows
-        updated_df = pd.concat([existing_data, new_row], ignore_index=True)
         
-        # 5. Push the updated dataframe back up to the cloud spreadsheet
-        conn.update(data=updated_df)
+        if existing_data is None or existing_data.empty:
+            updated_df = new_row
+        else:
+            updated_df = pd.concat([existing_data, new_row], ignore_index=True)
+        
+        # 5. Force write back to the cloud using worksheet=0
+        conn.update(worksheet=0, data=updated_df)
+        print("SUCCESS: Log entry successfully pushed to Google Sheets.")
         
     except Exception as e:
         # Keep the main grower user interface fully operational even if connection fails

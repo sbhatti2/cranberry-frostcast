@@ -91,9 +91,11 @@ def log_grower_request_to_sheets(time_et, lat, lon, tolerance, lowest_forecast_t
             "Raw_HRRR_4AM_Temp": str(hrrr4am_temp),
             "NDFD_5AM_Temp": f"{float(ndfd_temp):.1f}" if ndfd_temp is not None else "N/A"
         }])
-        st.write(f'{new_row}')
         
+        # Visual debugging check on the app screen
+        st.write("DEBUG (New Row DataFrame):", new_row)
         
+        # 4. Merge data frames
         if existing_data is None or existing_data.empty:
             updated_df = new_row
         else:
@@ -105,6 +107,7 @@ def log_grower_request_to_sheets(time_et, lat, lon, tolerance, lowest_forecast_t
         
     except Exception as e:
         # Keep the main grower user interface fully operational even if connection fails
+        st.write(f"DEBUG Error caught inside function: {e}")
         print(f"Google Sheets Logging Failed: {e}")
         
         
@@ -1261,17 +1264,6 @@ if st.session_state.get('show_results'):
         elif res['prediction'] > tol + 7:
             st.success(f"✅ **LOW RISK**: Conditions currently look safe. Predicted temperature is {res['prediction']:.1f}°F, which is {diff:.1f}°F {aorb} Tolerance ({tol:.1f}°F).{weather_warning}")
         
-        st.write("DEBUG: The forecast ran successfully! Attempting to connect to Google Sheets now...")
-        log_grower_request_to_sheets(
-            time_et = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"), 
-            lat=st.session_state.lat,
-            lon=st.session_state.lon,
-            tolerance=tol,
-            lowest_forecast_temp=res['prediction'],
-            hrrr4am_temp = res['hrrr_temp'],
-            ndfd_temp = ndfd_float # Added the new NDFD variable here
-        )
-        
         # Display the Hourly HRRR Curve
         st.markdown("### Overnight Temperature Trend using NOAA's HRRR regional model")
         df_curve = get_cached_hrrr_curve(lat, lon, latest_run_time, Time_Code)
@@ -1376,3 +1368,13 @@ if st.session_state.get('show_results'):
                 st.plotly_chart(fig, width = 'stretch')
         else:
             st.warning("Hourly curve data not available for the current HRRR window.")
+    st.write("DEBUG: The forecast ran successfully! Attempting to connect to Google Sheets now...")
+    log_grower_request_to_sheets(
+        time_et = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"), 
+        lat=st.session_state.lat,
+        lon=st.session_state.lon,
+        tolerance=tol,
+        lowest_forecast_temp=res['prediction'],
+        hrrr4am_temp = res['hrrr_temp'],
+        ndfd_temp = ndfd_float # Added the new NDFD variable here
+    )

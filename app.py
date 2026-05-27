@@ -1256,7 +1256,7 @@ if st.session_state.get('show_results'):
         elif res['prediction'] > tol + 7:
             st.success(f"✅ **LOW RISK**: Conditions currently look safe. Predicted temperature is {res['prediction']:.1f}°F, which is {diff:.1f}°F {aorb} Tolerance ({tol:.1f}°F).{weather_warning}")
         
-        
+        st.write("DEBUG: The forecast ran successfully! Attempting to connect to Google Sheets now...")
         log_grower_request_to_sheets(
             time_et = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"), 
             lat=st.session_state.lat,

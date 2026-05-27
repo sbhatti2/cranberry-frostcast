@@ -14,3 +14,4 @@ psycopg2-binary
 matplotlib
 cfgrib
 py3dep
+st-gsheets-connection

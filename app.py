@@ -44,6 +44,9 @@ import pytz
 import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import os
+import csv
+from streamlit_gsheets import GSheetsConnection
 
 # Silence the Xarray "FutureWarning" for combining weather data chunks
 xr.set_options(use_new_combine_kwarg_defaults=True)
@@ -68,6 +71,38 @@ if "lat" in url_params and "lon" in url_params and not is_resetting:
 #%% Backend function 
 # MODEL_PATH = 'frost_model_010626.joblib'
 
+
+def log_grower_request_to_sheets(time_et, lat, lon, tolerance, lowest_forecast_temp, hrrr4am_temp, ndfd_temp):
+    """Securely appends a grower interaction row directly to a live Google Sheet."""
+    try:
+        # 1. Connect to the Google Sheet using the URL saved in your Streamlit Secrets
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # 2. Read the existing log rows into a temporary DataFrame
+        existing_data = conn.read(ttl=0) # ttl=0 ensures we bypass cache to get freshest data
+        
+        # 3. Format the new grower interaction row with the added NDFD metric
+        new_row = pd.DataFrame([{
+            "Timestamp": str(time_et),
+            "Latitude": round(float(lat), 6),
+            "Longitude": round(float(lon), 6),
+            "Tolerance": round(float(tolerance), 1),
+            "Model_Prediction": str(lowest_forecast_temp),
+            "Raw_HRRR_4AM_Temp": str(hrrr4am_temp),
+            "NDFD_5AM_Temp": f"{float(ndfd_temp):.1f}" if ndfd_temp is not None else "N/A"
+        }])
+        
+        # 4. Append the new row to the existing rows
+        updated_df = pd.concat([existing_data, new_row], ignore_index=True)
+        
+        # 5. Push the updated dataframe back up to the cloud spreadsheet
+        conn.update(data=updated_df)
+        
+    except Exception as e:
+        # Keep the main grower user interface fully operational even if connection fails
+        print(f"Google Sheets Logging Failed: {e}")
+        
+        
 @st.cache_data(ttl=1800)
 def find_5am_value(lat, lon,time_code):
     headers = {'User-Agent': '(myweatherapp.com, contact@email.com)'}
@@ -836,8 +871,7 @@ def load_ml_model(model_path, scaler_path):
         scaler = s_obj
     return model, scaler
 
-loaded_model, loaded_scaler = load_ml_model(MODEL_PATH, SCALER_PATH)
-new_model, new_scaler = load_ml_model(MODEL_PATH_NEW, SCALER_PATH_NEW)
+
 
 #  CACHING THE WEATHER FETCHED BY THE HOUR 
 @st.cache_data(show_spinner=False)
@@ -975,16 +1009,15 @@ with col2:
             
             # 2. CRITICAL: Break the old forecast visibility so they don't see stale data
             st.session_state.show_results = False
-            st.session_state.needs_confirmation = True
-            # 3. Rerun to instantly slide the red marker to their thumb's tap
-            st.rerun()
+            # st.session_state.needs_confirmation = True
+            # # 3. Rerun to instantly slide the red marker to their thumb's tap
+            # st.rerun()
 
-    # 2. SHOW THE BUTTON: Only if the pin just moved and hasn't been confirmed yet
-    if st.session_state.get('needs_confirmation', False) and not st.session_state.show_results:
+        # 2. SHOW THE BUTTON: Show it whenever a fresh forecast hasn't been generated yet
+    if not st.session_state.show_results:
         if st.button("Confirm your selected location & Generate Forecast ✅ ", type="primary", use_container_width=True):
             st.session_state.show_results = True
-            st.session_state.needs_confirmation = False # <-- Clear the flag once confirmed
-            st.rerun()
+            st.rerun() # KEEP THIS ONE: Necessary to kick off your heavy HRRR/prediction models
         
             st.markdown(f"**Selected Point: {click_lat:.5f}, {click_lon:.5f}**")
         ################ NEW VERSION ################    
@@ -1019,6 +1052,8 @@ if predict_btn:
     st.session_state.show_results = True
 
 if st.session_state.get('show_results'):
+    loaded_model, loaded_scaler = load_ml_model(MODEL_PATH, SCALER_PATH)
+    new_model, new_scaler = load_ml_model(MODEL_PATH_NEW, SCALER_PATH_NEW)
     # creating data container to lock data and so it stays with any reruns
     result_container = st.container()
     
@@ -1220,6 +1255,18 @@ if st.session_state.get('show_results'):
             st.info(f"⚠️ **FROST POSSIBLE**: Predicted temperature is {res['prediction']:.1f}°F, which is {diff:.1f}°F {aorb} Tolerance ({tol:.1f}°F).{weather_warning}")
         elif res['prediction'] > tol + 7:
             st.success(f"✅ **LOW RISK**: Conditions currently look safe. Predicted temperature is {res['prediction']:.1f}°F, which is {diff:.1f}°F {aorb} Tolerance ({tol:.1f}°F).{weather_warning}")
+        
+        
+        log_grower_request_to_sheets(
+            time_et = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"), 
+            lat=st.session_state.lat,
+            lon=st.session_state.lon,
+            tolerance=tol,
+            lowest_forecast_temp=res['prediction'],
+            hrrr4am_temp = res['hrrr_temp'],
+            ndfd_temp = ndfd_float # Added the new NDFD variable here
+        )
+        
         # Display the Hourly HRRR Curve
         st.markdown("### Overnight Temperature Trend using NOAA's HRRR regional model")
         df_curve = get_cached_hrrr_curve(lat, lon, latest_run_time, Time_Code)
